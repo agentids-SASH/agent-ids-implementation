@@ -23,39 +23,26 @@ Deployer
     ▼
 User Portal
     │
-    ▼
-Provider Platform
+    ▼                                            Attestation Service
+                                                 (Manages attestations provided by the Deployer, Developer, and Provider.)
+Provider Platform                           
 ├── Agent Registry
 ├── Agent Identity
-├── Attestation Service
-├── Authorization Service
 ├── Policy Service
 ├── Agent Runtime
-└── Audit Service
     │
-    ▼
-External LLM Provider
+    ▼                                         Authorization Service
+                                          (Handles auth flow between the Deployer, 
+                                           Agent, and Service.)
+Developer - External LLM Provider            
     │
     ▼
 Target Service
 (Bank)
+    │
+    ▼
+Audit Service
 ```
-
----
-
-# Where our Actors might stand in this architecture
-
-| Protocol Actor | Platform Component                            |
-| -------------- | --------------------------------------------- |
-| Deployer       | User Portal + Consent UI                      |
-| Provider       | Entire AgentID Platform which includes(Agent Registry + Agent Runtime + Agent Identity Services)                       |
-| Agent          | Runtime Instance (LangGraph Worker running inside Agent Runtime Service) |
-| Developer      | External LLM Provider                         |
-| Service        | External Application (Bank in our case)                      |
-| Service Log    | Audit Service                                 |
-
-PS: They do not directly map 1:1 to microservices.
-
 ---
 
 # Project Structure (Just a high level view for understanding)
@@ -90,7 +77,9 @@ agentid-platform/
 
 ---
 
-# Microservices (I have these 7 main services in mind, can be refactored and all are not necessarily inside provider layer as given above)
+# Microservices 
+
+(I have these 7 main services in mind, can be refactored and all are not necessarily inside provider layer as given above)
 
 ## 1. Agent Registry Service
 
@@ -121,12 +110,11 @@ Responsibilities:
 
 ## 3. Attestation Service
 
-To manage trust evidence.
+To verify, store, and assemble attestations originating from different actors such as the Deployer, Developer, and Provider.
 
 Responsibilities:
 
-* Model attestations
-* Provider attestations
+* Verify attestations
 * Signature validation
 * Attestation chain verification
 
@@ -138,11 +126,9 @@ To implement OAuth/OIDC/CIBA. Allows agents to act only after explicit user auth
 
 Responsibilities:
 
-* Human approval workflows
+* OAuth/CIBA flow handling
+* Authorization state tracking
 * OAuth token issuance
-* Scope management
-* Authentication
-
 
 ---
 
@@ -208,9 +194,9 @@ Alternative:
 
 * Python (V1): Best for quickly building the first version because it works naturally with AI frameworks.
 
-* Go (Future Scale): Better for high-traffic production systems because it is faster, uses less memory, and handles security and authentication workloads more efficiently.
-
 Alternative:
+
+* Go (Future Scale): Better for high-traffic production systems because it is faster, uses less memory, and handles security and authentication workloads more efficiently.
 
 * Java Spring Boot
 
@@ -274,24 +260,26 @@ Alternative:
 # Request Flow
 
 ```text
-Create Agent
-    ↓
-Agent Registry
-    ↓
-Agent Identity
-    ↓
-Runtime Provisioning
-    ↓
-Attestation Verification
-    ↓
-OAuth CIBA Authorization
-    ↓
-Policy Evaluation
-    ↓
-Action Execution
-    ↓
-Audit Logging
-    ↓
-Success / Rejection
+Deployer → Create Agent
+
+Provider → Provision Runtime
+
+Developer → Provide Model Attestation
+
+Provider → Provide Runtime Attestation
+
+Provider → Assemble Agent ID
+
+Agent → Request Authorization
+
+Service ↔ Deployer (OAuth CIBA)
+
+Service → Issue Token
+
+Agent → Execute Action
+
+Service → Audit Log
+
+Service → Accept / Reject Request
 ```
 
