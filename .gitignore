@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pem
+services/agent-registry/agents_db.json
+.venv/
+env/
+venv/
+ENV/
+.idea/
+.vscode/
