@@ -1,17 +1,45 @@
 import uuid
-import logging
 import requests
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import Dict, Any
 
 import database
-
-# Configure basic logging to console
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("AgentRegistry")
+from logger_utils import log_event
 
 app = FastAPI(title="Agent ID Platform - Agent Registry")
+
+from threading import Lock
+logs_db = []
+logs_lock = Lock()
+
+class LogMessage(BaseModel):
+    timestamp: float
+    actor: str
+    message: str
+
+@app.post("/api/logs")
+def add_log(log: LogMessage):
+    with logs_lock:
+        logs_db.append({
+            "timestamp": log.timestamp,
+            "actor": log.actor,
+            "message": log.message
+        })
+    return {"status": "ok"}
+
+@app.get("/api/logs")
+def get_logs():
+    with logs_lock:
+        # Sort logs by timestamp to guarantee sequential ordering
+        sorted_logs = sorted(logs_db, key=lambda x: x["timestamp"])
+    return sorted_logs
+
+@app.delete("/api/logs")
+def clear_logs():
+    with logs_lock:
+        logs_db.clear()
+    return {"status": "cleared"}
 
 # Define the target URL for the Agent Runtime service
 RUNTIME_SERVICE_URL = "http://localhost:8001/api/runtime/start"
@@ -33,7 +61,7 @@ class AgentPromptRequest(BaseModel):
 @app.on_event("startup")
 def on_startup():
     database.init_db()
-    logger.info("Provider - Agent Registry Service started and database initialized.")
+    log_event("Provider", "Agent Registry Service started and database initialized.")
 
 @app.post("/api/agents")
 def register_agent(request: AgentCreateRequest):
@@ -41,7 +69,7 @@ def register_agent(request: AgentCreateRequest):
     Step 0 & 1: Registers a blank agent in the system and provisions an idle runtime worker.
     """
     agent_id = str(uuid.uuid4())
-    logger.info(f"Provider - Agent Registry received registration request for agent: {request.name} (Model: {request.model})")
+    log_event("Provider", f"Agent Registry received registration request for agent: {request.name} (Model: {request.model})")
 
     # Create agent record with 'initializing' status
     agent_data = {
@@ -56,14 +84,14 @@ def register_agent(request: AgentCreateRequest):
         "agent_id_jwt": None
     }
     database.save_agent(agent_id, agent_data)
-    logger.info(f"Provider - Agent {agent_id} saved to registry database with 'initializing' status.")
+    log_event("Provider", f"Agent {agent_id} saved to registry database with 'initializing' status.")
 
     try:
         payload = {
             "agent_id": agent_id,
             "model": request.model
         }
-        logger.info(f"Provider - Agent Registry asking Runtime Service at {RUNTIME_SERVICE_URL} to spin up agent...")
+        log_event("Provider", f"Agent Registry asking Runtime Service at {RUNTIME_SERVICE_URL} to spin up agent...")
         response = requests.post(RUNTIME_SERVICE_URL, json=payload, timeout=5)
         
         if response.status_code == 200:
@@ -72,17 +100,17 @@ def register_agent(request: AgentCreateRequest):
             agent_data["status"] = "idle"
             agent_data["runtime_id"] = runtime_info.get("runtime_id")
             database.save_agent(agent_id, agent_data)
-            logger.info(f"Provider - Agent {agent_id} successfully provisioned on runtime (IDLE): {runtime_info.get('runtime_id')}")
+            log_event("Provider", f"Agent {agent_id} successfully provisioned on runtime (IDLE): {runtime_info.get('runtime_id')}")
         else:
             agent_data["status"] = "failed_to_provision"
             database.save_agent(agent_id, agent_data)
-            logger.error(f"Provider - Runtime service returned error {response.status_code}: {response.text}")
+            log_event("Provider", f"Runtime service returned error {response.status_code}: {response.text}")
             raise HTTPException(status_code=502, detail="Failed to start agent in the runtime environment.")
 
     except requests.exceptions.RequestException as e:
         agent_data["status"] = "failed_to_provision"
         database.save_agent(agent_id, agent_data)
-        logger.error(f"Provider - Could not connect to Runtime Service: {str(e)}")
+        log_event("Provider", f"Could not connect to Runtime Service: {str(e)}")
         raise HTTPException(status_code=503, detail="Agent Runtime Service is currently offline.")
 
     return {
@@ -97,7 +125,7 @@ def submit_prompt(agent_id: str, request: AgentPromptRequest):
     """
     Step 2: Receives prompt from Deployer, triggers key generation and composite JWT signature.
     """
-    logger.info(f"Provider - Agent Registry received operational prompt for agent ID: {agent_id}")
+    log_event("Provider", f"Agent Registry received operational prompt for agent ID: {agent_id}")
     
     # 1. Verify agent exists in registry
     agent_data = database.get_agent(agent_id)
@@ -113,7 +141,7 @@ def submit_prompt(agent_id: str, request: AgentPromptRequest):
             "deployer_identifier": request.deployer_identifier,
             "deployer_accountability_id": request.deployer_accountability_id
         }
-        logger.info(f"Provider - Agent Registry forwarding prompt to Runtime Service: {runtime_url}")
+        log_event("Provider", f"Agent Registry forwarding prompt to Runtime Service: {runtime_url}")
         response = requests.post(runtime_url, json=payload, timeout=8)
         
         if response.status_code == 200:
@@ -125,17 +153,17 @@ def submit_prompt(agent_id: str, request: AgentPromptRequest):
             agent_data["agent_id_jwt"] = result.get("agent_id_jwt")
             database.save_agent(agent_id, agent_data)
             
-            logger.info(f"Provider - Agent ID JWT successfully received and saved for agent: {agent_id}")
+            log_event("Provider", f"Agent ID JWT successfully received and saved for agent: {agent_id}")
             return {
                 "status": "prepared",
                 "agent_id_jwt": agent_data["agent_id_jwt"]
             }
         else:
-            logger.error(f"Provider - Runtime prompt trigger returned error {response.status_code}: {response.text}")
+            log_event("Provider", f"Runtime prompt trigger returned error {response.status_code}: {response.text}")
             raise HTTPException(status_code=response.status_code, detail="Failed to initialize cryptographic identity.")
             
     except requests.exceptions.RequestException as e:
-        logger.error(f"Provider - Error connecting to Runtime Service: {str(e)}")
+        log_event("Provider", f"Error connecting to Runtime Service: {str(e)}")
         raise HTTPException(status_code=503, detail="Agent Runtime Service is currently offline.")
 
 @app.get("/api/agents")

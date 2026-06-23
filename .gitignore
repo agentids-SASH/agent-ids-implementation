@@ -9,3 +9,6 @@ venv/
 ENV/
 .idea/
 .vscode/
+Notes.txt
+../Notes.txt
+

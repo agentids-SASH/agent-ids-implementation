@@ -1,13 +1,11 @@
 import os
 import base64
-import logging
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import serialization, hashes
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("AuditAuthorityService")
+from logger_utils import log_event
 
 app = FastAPI(title="Agent ID Platform - Audit Authority Service")
 
@@ -20,7 +18,7 @@ def load_or_generate_key() -> rsa.RSAPrivateKey:
         with open(KEY_FILE, "rb") as f:
             return serialization.load_pem_private_key(f.read(), password=None)
     
-    logger.info("Audit Authority - Generating new cryptographic RSA key pair...")
+    log_event("Audit", "Generating new cryptographic RSA key pair...")
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     
     pem = private_key.private_bytes(
@@ -42,7 +40,7 @@ class DecryptRequest(BaseModel):
 
 @app.on_event("startup")
 def on_startup():
-    logger.info("Audit Authority Service started on port 8004.")
+    log_event("Audit", "Audit Authority Service started on port 8004.")
 
 @app.get("/api/audit/public-key")
 def get_public_key():
@@ -76,8 +74,8 @@ def decrypt_data(request: DecryptRequest, authorization: str = Header(None)):
             )
         )
         decrypted_value = decrypted_bytes.decode("utf-8")
-        logger.info("Audit Authority - Successfully decrypted sensitive claim.")
+        log_event("Audit", "Successfully decrypted sensitive claim.")
         return {"decrypted_value": decrypted_value}
     except Exception as e:
-        logger.error(f"Audit Authority - Decryption failed: {str(e)}")
+        log_event("Audit", f"Decryption failed: {str(e)}")
         raise HTTPException(status_code=400, detail="Failed to decrypt ciphertext. Invalid key or formatting.")
