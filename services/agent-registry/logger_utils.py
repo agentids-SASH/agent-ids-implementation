@@ -9,6 +9,7 @@ COLORS = {
     "Developer": "\033[94m",  # Blue
     "Audit": "\033[93m",      # Yellow
     "Deployer": "\033[95m",   # Magenta
+    "Bank": "\033[91m",       # Light Red
 }
 RESET = "\033[0m"
 

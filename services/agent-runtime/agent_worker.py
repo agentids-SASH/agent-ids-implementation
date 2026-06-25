@@ -145,6 +145,45 @@ class AgentWorker(threading.Thread):
                 log_event("Agent", f"    agent_public_key (truncated):     {bind_claims.get('agent_public_key')[:40].replace(chr(10),'')}...")
 
                 log_event("Agent", f"[Agent-{self.agent_id}] Cryptographic Agent ID flat presentation successfully assembled.")
+                
+                # 5. Direct target Service invocation (original flow alignment)
+                import re
+                amount = 1000.0
+                from_account = "checking"
+                to_account = "savings"
+                
+                lower_prompt = prompt.lower()
+                if "checking" in lower_prompt:
+                    from_account = "checking"
+                if "savings" in lower_prompt:
+                    to_account = "savings"
+                
+                numbers = re.findall(r'\b\d+(?:\.\d+)?\b', lower_prompt)
+                if numbers:
+                    try:
+                        amount = float(numbers[0])
+                    except ValueError:
+                        pass
+                
+                log_event("Agent", f"[Agent-{self.agent_id}] Direct Invocation: Submitting transaction to target service '{receiving_service}'...")
+                bank_url = "http://127.0.0.1:8003/api/bank/transfer"
+                bank_payload = {
+                    "amount": amount,
+                    "from_account": from_account,
+                    "to_account": to_account,
+                    "agent_id_jwt": self.agent_id_jwt
+                }
+                log_event("Agent", f"[Agent-{self.agent_id}] HTTP POST to Bank Service: {bank_url}. Payload: Transfer {amount:.2f} USD from '{from_account}' to '{to_account}' using flat Agent ID.")
+                try:
+                    res = requests.post(bank_url, json=bank_payload, timeout=10)
+                    if res.status_code == 200:
+                        log_event("Agent", f"[Agent-{self.agent_id}] Bank Service Response (HTTP 200 OK): {res.json()}")
+                        log_event("Agent", f"[Agent-{self.agent_id}] [SUCCESS] Transaction completed successfully!")
+                    else:
+                        log_event("Agent", f"[Agent-{self.agent_id}] [ERROR] Bank Service rejected transaction (HTTP {res.status_code}): {res.text}")
+                except Exception as e:
+                    log_event("Agent", f"[Agent-{self.agent_id}] [ERROR] Connection to Bank Service failed: {str(e)}")
+
                 return True
             else:
                 log_event("Agent", f"[Agent-{self.agent_id}] Provider composition failed. Status Code: HTTP {compose_res.status_code}. Response: {compose_res.text}")

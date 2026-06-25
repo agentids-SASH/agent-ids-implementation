@@ -65,6 +65,7 @@ def print_unified_logs():
                 "Developer": "\033[94m",  # Blue
                 "Audit": "\033[93m",      # Yellow
                 "Deployer": "\033[95m",   # Magenta
+                "Bank": "\033[91m",       # Light Red
             }
             reset = "\033[0m"
             for log in logs:
@@ -256,7 +257,7 @@ def main():
             # Fetch Developer, Provider, and Deployer public keys from Identity Service JWKS
             log_deployer_event("Fetching Developer, Provider, and Deployer public keys from Identity Service JWKS...")
             try:
-                jwks_url = "http://localhost:8002/.well-known/jwks.json"
+                jwks_url = "http://127.0.0.1:8002/.well-known/jwks.json"
                 dev_key = get_key_from_jwks(jwks_url, "developer-key-1")
                 prov_key = get_key_from_jwks(jwks_url, "provider-key-1")
                 dep_key = get_key_from_jwks(jwks_url, "deployer-key-1")
@@ -344,6 +345,7 @@ def main():
                     log_deployer_event(f"[ERROR] Decryption failed. Status Code: HTTP {decrypt_res.status_code}. Response: {decrypt_res.text}")
             except Exception as e:
                 log_deployer_event(f"[ERROR] Could not connect to Audit Service: {str(e)}")
+
         else:
             log_deployer_event("[WARNING] No Agent ID flat container returned from the server.")
 

@@ -48,7 +48,7 @@ def start_runtime(request: RuntimeStartRequest):
         
         # Save to active workers registry
         active_workers[request.agent_id] = worker
-        agent_instance_identifier = f"worker-{request.agent_id}"
+        agent_instance_identifier = f"spiffe://provider.net/agent/worker-{request.agent_id}"
         
         log_event("Provider", f"Worker thread {agent_instance_identifier} successfully created and running.")
         response_payload = {
