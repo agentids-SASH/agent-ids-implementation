@@ -141,10 +141,11 @@ def submit_prompt(agent_id: str, request: AgentPromptRequest):
         payload = {
             "deployer_prompt": request.deployer_prompt,
             "receiving_service": request.receiving_service,
+            "deployer_identifier_on_service": request.deployer_identifier_on_service,
             "deployer_attestation": request.deployer_attestation
         }
-        log_event("Provider", f"Agent Registry forwarding prompt. Sending HTTP POST to Runtime Service: {runtime_url}. Payload: deployer_prompt='{payload['deployer_prompt']}', receiving_service='{payload['receiving_service']}', deployer_attestation (JWT)='{payload['deployer_attestation'][:30]}...'")
-        response = requests.post(runtime_url, json=payload, timeout=8)
+        log_event("Provider", f"Agent Registry forwarding prompt. Sending HTTP POST to Runtime Service: {runtime_url}. Payload: deployer_prompt='{payload['deployer_prompt']}', receiving_service='{payload['receiving_service']}', deployer_identifier_on_service='{payload['deployer_identifier_on_service']}', deployer_attestation (JWT)='{payload['deployer_attestation'][:30]}...'")
+        response = requests.post(runtime_url, json=payload, timeout=120)
         
         if response.status_code == 200:
             result = response.json()

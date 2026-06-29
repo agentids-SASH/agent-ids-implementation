@@ -3,6 +3,13 @@ import os
 
 DB_FILE = "bank_db.json"
 
+# In-memory stores for OAuth/CIBA transient state
+# auth_req_id -> { "status": "pending" | "approved" | "denied", "username": str, "scopes": list }
+ciba_requests = {}
+
+# access_token -> { "auth_req_id": str, "scopes": list, "username": str }
+access_tokens = {}
+
 DEFAULT_DB = {
     "accounts": {
         "checking": 5000.0,

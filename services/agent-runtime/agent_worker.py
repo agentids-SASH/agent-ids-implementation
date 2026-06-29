@@ -42,7 +42,8 @@ class AgentWorker(threading.Thread):
         self,
         deployer_attestation: str,
         prompt: str,
-        receiving_service: str
+        receiving_service: str,
+        deployer_identifier_on_service: str
     ):
         """
         Runs the cryptographic handshake (Steps 2 to 5) when an initial prompt is received.
@@ -146,7 +147,66 @@ class AgentWorker(threading.Thread):
 
                 log_event("Agent", f"[Agent-{self.agent_id}] Cryptographic Agent ID flat presentation successfully assembled.")
                 
-                # 5. Direct target Service invocation (original flow alignment)
+                # 5. OAuth 2.0 CIBA Authorization (Steps 6-9)
+                log_event("Agent", f"[Agent-{self.agent_id}] [Step 6] Initiating OAuth 2.0 CIBA request to Bank Service...")
+                ciba_url = "http://127.0.0.1:8003/api/oauth/ciba"
+                ciba_payload = {
+                    "requested_scopes": ["transfer_funds"],
+                    "deployer_identifier_on_service": deployer_identifier_on_service
+                }
+                
+                try:
+                    ciba_res = requests.post(ciba_url, json=ciba_payload, timeout=5)
+                    if ciba_res.status_code != 200:
+                        log_event("Agent", f"[Agent-{self.agent_id}] [ERROR] CIBA request failed (HTTP {ciba_res.status_code}): {ciba_res.text}")
+                        return False
+                    
+                    ciba_data = ciba_res.json()
+                    auth_req_id = ciba_data.get("auth_req_id")
+                    interval = ciba_data.get("interval", 1.5)
+                    log_event("Agent", f"[Agent-{self.agent_id}] CIBA request registered. Received auth_req_id: {auth_req_id}. Entering polling loop for OAuth token...")
+                except Exception as e:
+                    log_event("Agent", f"[Agent-{self.agent_id}] [ERROR] Failed to connect to CIBA endpoint: {str(e)}")
+                    return False
+                
+                # Polling loop for token (Step 9)
+                token_url = "http://127.0.0.1:8003/api/oauth/token"
+                token_payload = {
+                    "grant_type": "urn:openid:params:grant-type:ciba",
+                    "auth_req_id": auth_req_id
+                }
+                
+                access_token = None
+                max_polls = 60
+                for poll_num in range(max_polls):
+                    try:
+                        token_res = requests.post(token_url, json=token_payload, timeout=5)
+                        if token_res.status_code == 200:
+                            token_data = token_res.json()
+                            access_token = token_data.get("access_token")
+                            log_event("Agent", f"[Agent-{self.agent_id}] [Step 9] OAuth access token successfully retrieved: {access_token[:15]}...")
+                            break
+                        elif token_res.status_code == 400:
+                            err_data = token_res.json()
+                            if err_data.get("error") == "authorization_pending":
+                                log_event("Agent", f"[Agent-{self.agent_id}] [Step 7-8] OAuth token authorization pending. Awaiting Deployer out-of-band approval (Poll {poll_num+1}/{max_polls})...")
+                            else:
+                                log_event("Agent", f"[Agent-{self.agent_id}] [ERROR] Token endpoint returned error: {err_data}")
+                                return False
+                        else:
+                            log_event("Agent", f"[Agent-{self.agent_id}] [ERROR] Token endpoint returned HTTP {token_res.status_code}")
+                            return False
+                    except Exception as e:
+                        log_event("Agent", f"[Agent-{self.agent_id}] [ERROR] Polling token failed: {str(e)}")
+                        return False
+                    
+                    time.sleep(interval)
+                
+                if not access_token:
+                    log_event("Agent", f"[Agent-{self.agent_id}] [ERROR] CIBA authentication timed out after {max_polls * interval} seconds.")
+                    return False
+                
+                # 6. Target Service transaction execution (Step 10)
                 import re
                 amount = 1000.0
                 from_account = "checking"
@@ -165,7 +225,7 @@ class AgentWorker(threading.Thread):
                     except ValueError:
                         pass
                 
-                log_event("Agent", f"[Agent-{self.agent_id}] Direct Invocation: Submitting transaction to target service '{receiving_service}'...")
+                log_event("Agent", f"[Agent-{self.agent_id}] [Step 10] Submitting transaction with OAuth access token to target service...")
                 bank_url = "http://127.0.0.1:8003/api/bank/transfer"
                 bank_payload = {
                     "amount": amount,
@@ -173,9 +233,12 @@ class AgentWorker(threading.Thread):
                     "to_account": to_account,
                     "agent_id_jwt": self.agent_id_jwt
                 }
-                log_event("Agent", f"[Agent-{self.agent_id}] HTTP POST to Bank Service: {bank_url}. Payload: Transfer {amount:.2f} USD from '{from_account}' to '{to_account}' using flat Agent ID.")
+                bank_headers = {
+                    "Authorization": f"Bearer {access_token}"
+                }
+                log_event("Agent", f"[Agent-{self.agent_id}] HTTP POST to Bank Service: {bank_url}. Headers: Authorization: Bearer {access_token[:10]}...")
                 try:
-                    res = requests.post(bank_url, json=bank_payload, timeout=10)
+                    res = requests.post(bank_url, json=bank_payload, headers=bank_headers, timeout=10)
                     if res.status_code == 200:
                         log_event("Agent", f"[Agent-{self.agent_id}] Bank Service Response (HTTP 200 OK): {res.json()}")
                         log_event("Agent", f"[Agent-{self.agent_id}] [SUCCESS] Transaction completed successfully!")

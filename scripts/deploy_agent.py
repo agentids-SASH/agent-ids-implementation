@@ -3,6 +3,7 @@ import time
 import base64
 import requests
 import jwt  # Used to decode the returned JWT to show claims
+import threading
 from cryptography.hazmat.primitives.asymmetric import padding, ec
 from cryptography.hazmat.primitives import serialization, hashes
 
@@ -93,6 +94,12 @@ def main():
     # Clear central logs before starting
     try:
         requests.delete("http://localhost:8000/api/logs", timeout=2)
+    except Exception:
+        pass
+
+    # Clear old Bank Service CIBA transient requests/tokens
+    try:
+        requests.delete("http://localhost:8003/api/oauth/ciba", timeout=2)
     except Exception:
         pass
 
@@ -236,122 +243,170 @@ def main():
         "deployer_attestation": deployer_attestation
     }
 
-    try:
-        log_deployer_event(f"Sending HTTP POST request to Registry prompt endpoint: {prompt_url}. Payload: deployer_prompt='{prompt_payload['deployer_prompt']}', receiving_service='{prompt_payload['receiving_service']}', deployer_attestation (JWT)='{prompt_payload['deployer_attestation'][:30]}...'")
-        response = requests.post(prompt_url, json=prompt_payload, timeout=10)
-        
-        if response.status_code != 200:
-            log_deployer_event(f"[ERROR] Prompt submission failed. Status Code: HTTP {response.status_code}. Response: {response.text}")
-            sys.exit(1)
-            
-        result = response.json()
-        status = result.get("status")
-        agent_id_jwt = result.get("agent_id_jwt")  # This is the flat JSON presentation dict
-        
-        log_deployer_event(f"Registry responded with HTTP 200 OK. Response Payload: status='{status}', agent_id_jwt (flat JSON container)")
-        log_deployer_event(f"Cryptographic handshake completed! Agent State={status}")
-        
-        if agent_id_jwt:
-            log_deployer_event("Cryptographic Agent ID flat container received successfully.")
-            
-            # Fetch Developer, Provider, and Deployer public keys from Identity Service JWKS
-            log_deployer_event("Fetching Developer, Provider, and Deployer public keys from Identity Service JWKS...")
-            try:
-                jwks_url = "http://127.0.0.1:8002/.well-known/jwks.json"
-                dev_key = get_key_from_jwks(jwks_url, "developer-key-1")
-                prov_key = get_key_from_jwks(jwks_url, "provider-key-1")
-                dep_key = get_key_from_jwks(jwks_url, "deployer-key-1")
-            except Exception as e:
-                log_deployer_event(f"[ERROR] Failed to resolve keys from JWKS: {str(e)}")
-                sys.exit(1)
+    # 1. Define target function for background thread to run prompt execution
+    prompt_response = {}
+    prompt_error = []
+    def call_prompt_api():
+        try:
+            log_deployer_event(f"Sending HTTP POST request to Registry prompt endpoint: {prompt_url}. Payload: deployer_prompt='{prompt_payload['deployer_prompt']}', receiving_service='{prompt_payload['receiving_service']}', deployer_attestation (JWT)='{prompt_payload['deployer_attestation'][:30]}...'")
+            res = requests.post(prompt_url, json=prompt_payload, timeout=120)
+            prompt_response["response"] = res
+        except Exception as e:
+            prompt_error.append(e)
 
-            dev_jwt = agent_id_jwt.get("developer_attestation")
-            prov_jwt = agent_id_jwt.get("provider_attestation")
-            dep_jwt = agent_id_jwt.get("deployer_attestation")
-            bind_jwt = agent_id_jwt.get("agent_instance_binding")
+    prompt_thread = threading.Thread(target=call_prompt_api, daemon=True)
+    prompt_thread.start()
 
-            log_deployer_event("Verifying and decoding all 4 peer-level independent JWTs:")
-            
-            # 1. Verify Developer Attestation
-            try:
-                decoded_dev = jwt.decode(dev_jwt, dev_key, algorithms=["ES256"])
-                log_deployer_event("[VERIFICATION SUCCESS] Developer Attestation verified under Developer JWK.")
-                print("    --- Developer Attestation Claims ---")
-                print(f"      iss (Issuer):               {decoded_dev.get('iss')}")
-                print(f"      developer_identifier:        {decoded_dev.get('developer_identifier')}")
-                print(f"      foundation_model_identifier: {decoded_dev.get('foundation_model_identifier')}")
-                print(f"      foundation_model_safety_evidence: {decoded_dev.get('foundation_model_safety_evidence')}")
-                print(f"      jti (Nonce):                {decoded_dev.get('jti')}")
-                print(f"      iat (Issued At):            {decoded_dev.get('iat')}")
-            except Exception as e:
-                log_deployer_event(f"[VERIFICATION FAILED] Developer Attestation signature verification failed: {str(e)}")
+    # 2. Main thread polls for pending requests and asks user for approval
+    pending_url = "http://127.0.0.1:8003/api/oauth/ciba/pending"
+    approve_url = "http://127.0.0.1:8003/api/oauth/ciba/approve"
+    username = prompt_payload["deployer_identifier_on_service"]
+    
+    approved = False
+    while prompt_thread.is_alive() and not approved:
+        try:
+            res = requests.get(pending_url, timeout=3)
+            if res.status_code == 200:
+                requests_list = res.json().get("requests", [])
+                for req in requests_list:
+                    if req.get("username") == username:
+                        auth_req_id = req.get("auth_req_id")
+                        log_deployer_event("Consent Request Alert: Transfer 1000 USD from checking to savings.")
+                        user_approval = input("Type 'Yes' to approve: ")
+                        log_deployer_event(f"User entered approval input: '{user_approval.strip()}'")
+                        if user_approval.strip().lower() in ("yes", "y"):
+                            approve_payload = {"auth_req_id": auth_req_id}
+                            approve_res = requests.post(approve_url, json=approve_payload, timeout=5)
+                            if approve_res.status_code == 200:
+                                log_deployer_event("Consent successfully submitted. CIBA Request approved.")
+                                approved = True
+                            else:
+                                log_deployer_event(f"Failed to approve CIBA request: {approve_res.text}")
+                        else:
+                            log_deployer_event("Consent denied or ignored.")
+                            approved = True
+                        break
+        except Exception:
+            pass
+        time.sleep(0.5)
 
-            # 2. Verify Provider Attestation
-            try:
-                decoded_prov = jwt.decode(prov_jwt, prov_key, algorithms=["ES256"])
-                log_deployer_event("[VERIFICATION SUCCESS] Provider Attestation verified under Provider JWK.")
-                print("    --- Provider Attestation Claims ---")
-                print(f"      iss (Issuer):               {decoded_prov.get('iss')}")
-                print(f"      provider_identifier:        {decoded_prov.get('provider_identifier')}")
-                print(f"      sub (Subject):             {decoded_prov.get('sub')}")
-                print(f"      agent_instance_identifier:  {decoded_prov.get('agent_instance_identifier')}")
-                print(f"      provider_security_evidence: {decoded_prov.get('provider_security_evidence')}")
-                print(f"      agent_instance_shutdown_command: {decoded_prov.get('agent_instance_shutdown_command')}")
-            except Exception as e:
-                log_deployer_event(f"[VERIFICATION FAILED] Provider Attestation signature verification failed: {str(e)}")
+    # 3. Wait for the API thread to finish
+    prompt_thread.join()
 
-            # 3. Verify Deployer Attestation
-            try:
-                decoded_dep = jwt.decode(dep_jwt, dep_key, algorithms=["ES256"])
-                log_deployer_event("[VERIFICATION SUCCESS] Deployer Attestation verified under Deployer JWK.")
-                print("    --- Deployer Attestation Claims ---")
-                print(f"      iss (Issuer):               {decoded_dep.get('iss')}")
-                print(f"      deployer_identifier:        {decoded_dep.get('deployer_identifier')}")
-                print(f"      deployer_accountability_id: {decoded_dep.get('deployer_accountability_id')[:30]}...")
-            except Exception as e:
-                log_deployer_event(f"[VERIFICATION FAILED] Deployer Attestation signature verification failed: {str(e)}")
-
-            # 4. Verify Agent Instance Binding
-            try:
-                unverified = jwt.decode(bind_jwt, options={"verify_signature": False})
-                agent_pub_pem = unverified.get("agent_public_key")
-                agent_key = serialization.load_pem_public_key(agent_pub_pem.encode('utf-8'))
-                decoded_bind = jwt.decode(bind_jwt, agent_key, algorithms=["ES256"])
-                log_deployer_event("[VERIFICATION SUCCESS] Agent Instance Binding verified under Agent public key.")
-                print("    --- Agent Instance Binding Claims ---")
-                print(f"      iss (Issuer):               {decoded_bind.get('iss')}")
-                print(f"      sub (Subject):             {decoded_bind.get('sub')}")
-                print(f"      agent_instance_identifier:  {decoded_bind.get('agent_instance_identifier')}")
-                print(f"      agent_public_key (trunc):  {decoded_bind.get('agent_public_key')[:45].strip()}...")
-            except Exception as e:
-                log_deployer_event(f"[VERIFICATION FAILED] Agent Instance Binding signature verification failed: {str(e)}")
-
-            # Demonstrate Audit Authority Decryption (available on demand)
-            decrypt_url = "http://localhost:8004/api/audit/decrypt"
-            decrypt_payload = {
-                "ciphertext_base64": decoded_dep.get('deployer_accountability_id')
-            }
-            log_deployer_event(f"Sending HTTP POST request to Audit Service decrypt endpoint: {decrypt_url}. Header: Authorization='Bearer audit_secret_token'. Payload: ciphertext_base64 (JWE)='{decrypt_payload['ciphertext_base64'][:30]}...'")
-            try:
-                headers = {
-                    "Authorization": "Bearer audit_secret_token"
-                }
-                decrypt_res = requests.post(decrypt_url, json=decrypt_payload, headers=headers, timeout=5)
-                if decrypt_res.status_code == 200:
-                    decrypted_name = decrypt_res.json().get("decrypted_value")
-                    log_deployer_event(f"Audit Service responded with HTTP 200 OK. Response Payload: {decrypt_res.json()}")
-                    log_deployer_event(f"[SUCCESS] Audit Authority decrypted accountability ID: {decrypted_name}")
-                else:
-                    log_deployer_event(f"[ERROR] Decryption failed. Status Code: HTTP {decrypt_res.status_code}. Response: {decrypt_res.text}")
-            except Exception as e:
-                log_deployer_event(f"[ERROR] Could not connect to Audit Service: {str(e)}")
-
-        else:
-            log_deployer_event("[WARNING] No Agent ID flat container returned from the server.")
-
-    except requests.exceptions.RequestException as e:
-        log_deployer_event(f"[ERROR] Connection failed: {str(e)}")
+    if prompt_error:
+        log_deployer_event(f"[ERROR] Prompt submission failed: {prompt_error[0]}")
         sys.exit(1)
+
+    response = prompt_response.get("response")
+    if not response or response.status_code != 200:
+        err_msg = response.text if response else "No response"
+        log_deployer_event(f"[ERROR] Prompt submission failed. Response: {err_msg}")
+        sys.exit(1)
+
+    result = response.json()
+    status = result.get("status")
+    agent_id_jwt = result.get("agent_id_jwt")
+        
+    log_deployer_event(f"Registry responded with HTTP 200 OK. Response Payload: status='{status}', agent_id_jwt (flat JSON container)")
+    log_deployer_event(f"Cryptographic handshake completed! Agent State={status}")
+    
+    if agent_id_jwt:
+        log_deployer_event("Cryptographic Agent ID flat container received successfully.")
+        
+        # Fetch Developer, Provider, and Deployer public keys from Identity Service JWKS
+        log_deployer_event("Fetching Developer, Provider, and Deployer public keys from Identity Service JWKS...")
+        try:
+            jwks_url = "http://127.0.0.1:8002/.well-known/jwks.json"
+            dev_key = get_key_from_jwks(jwks_url, "developer-key-1")
+            prov_key = get_key_from_jwks(jwks_url, "provider-key-1")
+            dep_key = get_key_from_jwks(jwks_url, "deployer-key-1")
+        except Exception as e:
+            log_deployer_event(f"[ERROR] Failed to resolve keys from JWKS: {str(e)}")
+            sys.exit(1)
+
+        dev_jwt = agent_id_jwt.get("developer_attestation")
+        prov_jwt = agent_id_jwt.get("provider_attestation")
+        dep_jwt = agent_id_jwt.get("deployer_attestation")
+        bind_jwt = agent_id_jwt.get("agent_instance_binding")
+
+        log_deployer_event("Verifying and decoding all 4 peer-level independent JWTs:")
+        
+        # 1. Verify Developer Attestation
+        try:
+            decoded_dev = jwt.decode(dev_jwt, dev_key, algorithms=["ES256"])
+            log_deployer_event("[VERIFICATION SUCCESS] Developer Attestation verified under Developer JWK.")
+            print("    --- Developer Attestation Claims ---")
+            print(f"      iss (Issuer):               {decoded_dev.get('iss')}")
+            print(f"      developer_identifier:        {decoded_dev.get('developer_identifier')}")
+            print(f"      foundation_model_identifier: {decoded_dev.get('foundation_model_identifier')}")
+            print(f"      foundation_model_safety_evidence: {decoded_dev.get('foundation_model_safety_evidence')}")
+            print(f"      jti (Nonce):                {decoded_dev.get('jti')}")
+            print(f"      iat (Issued At):            {decoded_dev.get('iat')}")
+        except Exception as e:
+            log_deployer_event(f"[VERIFICATION FAILED] Developer Attestation signature verification failed: {str(e)}")
+
+        # 2. Verify Provider Attestation
+        try:
+            decoded_prov = jwt.decode(prov_jwt, prov_key, algorithms=["ES256"])
+            log_deployer_event("[VERIFICATION SUCCESS] Provider Attestation verified under Provider JWK.")
+            print("    --- Provider Attestation Claims ---")
+            print(f"      iss (Issuer):               {decoded_prov.get('iss')}")
+            print(f"      provider_identifier:        {decoded_prov.get('provider_identifier')}")
+            print(f"      sub (Subject):             {decoded_prov.get('sub')}")
+            print(f"      agent_instance_identifier:  {decoded_prov.get('agent_instance_identifier')}")
+            print(f"      provider_security_evidence: {decoded_prov.get('provider_security_evidence')}")
+            print(f"      agent_instance_shutdown_command: {decoded_prov.get('agent_instance_shutdown_command')}")
+        except Exception as e:
+            log_deployer_event(f"[VERIFICATION FAILED] Provider Attestation signature verification failed: {str(e)}")
+
+        # 3. Verify Deployer Attestation
+        try:
+            decoded_dep = jwt.decode(dep_jwt, dep_key, algorithms=["ES256"])
+            log_deployer_event("[VERIFICATION SUCCESS] Deployer Attestation verified under Deployer JWK.")
+            print("    --- Deployer Attestation Claims ---")
+            print(f"      iss (Issuer):               {decoded_dep.get('iss')}")
+            print(f"      deployer_identifier:        {decoded_dep.get('deployer_identifier')}")
+            print(f"      deployer_accountability_id: {decoded_dep.get('deployer_accountability_id')[:30]}...")
+        except Exception as e:
+            log_deployer_event(f"[VERIFICATION FAILED] Deployer Attestation signature verification failed: {str(e)}")
+
+        # 4. Verify Agent Instance Binding
+        try:
+            unverified = jwt.decode(bind_jwt, options={"verify_signature": False})
+            agent_pub_pem = unverified.get("agent_public_key")
+            agent_key = serialization.load_pem_public_key(agent_pub_pem.encode('utf-8'))
+            decoded_bind = jwt.decode(bind_jwt, agent_key, algorithms=["ES256"])
+            log_deployer_event("[VERIFICATION SUCCESS] Agent Instance Binding verified under Agent public key.")
+            print("    --- Agent Instance Binding Claims ---")
+            print(f"      iss (Issuer):               {decoded_bind.get('iss')}")
+            print(f"      sub (Subject):             {decoded_bind.get('sub')}")
+            print(f"      agent_instance_identifier:  {decoded_bind.get('agent_instance_identifier')}")
+            print(f"      agent_public_key (trunc):  {decoded_bind.get('agent_public_key')[:45].strip()}...")
+        except Exception as e:
+            log_deployer_event(f"[VERIFICATION FAILED] Agent Instance Binding signature verification failed: {str(e)}")
+
+        # Demonstrate Audit Authority Decryption (available on demand)
+        decrypt_url = "http://localhost:8004/api/audit/decrypt"
+        decrypt_payload = {
+            "ciphertext_base64": decoded_dep.get('deployer_accountability_id')
+        }
+        log_deployer_event(f"Sending HTTP POST request to Audit Service decrypt endpoint: {decrypt_url}. Header: Authorization='Bearer audit_secret_token'. Payload: ciphertext_base64 (JWE)='{decrypt_payload['ciphertext_base64'][:30]}...'")
+        try:
+            headers = {
+                "Authorization": "Bearer audit_secret_token"
+            }
+            decrypt_res = requests.post(decrypt_url, json=decrypt_payload, headers=headers, timeout=5)
+            if decrypt_res.status_code == 200:
+                decrypted_name = decrypt_res.json().get("decrypted_value")
+                log_deployer_event(f"Audit Service responded with HTTP 200 OK. Response Payload: {decrypt_res.json()}")
+                log_deployer_event(f"[SUCCESS] Audit Authority decrypted accountability ID: {decrypted_name}")
+            else:
+                log_deployer_event(f"[ERROR] Decryption failed. Status Code: HTTP {decrypt_res.status_code}. Response: {decrypt_res.text}")
+        except Exception as e:
+            log_deployer_event(f"[ERROR] Could not connect to Audit Service: {str(e)}")
+
+    else:
+        log_deployer_event("[WARNING] No Agent ID flat container returned from the server.")
 
     time.sleep(1.0)
     log_deployer_event("Exact protocol flow simulation (Steps 0 to 5) completed.")

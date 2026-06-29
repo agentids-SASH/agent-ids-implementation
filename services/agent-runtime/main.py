@@ -20,6 +20,7 @@ class RuntimeStartRequest(BaseModel):
 class RuntimePromptRequest(BaseModel):
     deployer_prompt: str
     receiving_service: str
+    deployer_identifier_on_service: str
     deployer_attestation: str
 
 class RuntimeStopRequest(BaseModel):
@@ -66,7 +67,7 @@ def receive_prompt(agent_id: str, request: RuntimePromptRequest):
     """
     Step 2: Receives an operational prompt. Triggers key generation and fetches the composite Agent ID.
     """
-    log_event("Provider", f"Agent Runtime received prompt request for Agent {agent_id}. Input Payload: deployer_prompt='{request.deployer_prompt}', receiving_service='{request.receiving_service}', deployer_attestation (JWT)='{request.deployer_attestation[:30]}...'")
+    log_event("Provider", f"Agent Runtime received prompt request for Agent {agent_id}. Input Payload: deployer_prompt='{request.deployer_prompt}', receiving_service='{request.receiving_service}', deployer_identifier_on_service='{request.deployer_identifier_on_service}', deployer_attestation (JWT)='{request.deployer_attestation[:30]}...'")
     
     worker = active_workers.get(agent_id)
     if not worker:
@@ -76,7 +77,8 @@ def receive_prompt(agent_id: str, request: RuntimePromptRequest):
     success = worker.initialize_cryptographic_identity(
         deployer_attestation=request.deployer_attestation,
         prompt=request.deployer_prompt,
-        receiving_service=request.receiving_service
+        receiving_service=request.receiving_service,
+        deployer_identifier_on_service=request.deployer_identifier_on_service
     )
 
     if not success or worker.agent_id_jwt is None:

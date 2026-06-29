@@ -1,7 +1,9 @@
 import base64
 import requests
 import jwt
-from fastapi import FastAPI, HTTPException
+import uuid
+from fastapi import FastAPI, HTTPException, Header
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
@@ -17,10 +19,105 @@ class TransferRequest(BaseModel):
     to_account: str
     agent_id_jwt: dict  # The flat JSON representation container containing 4 tokens
 
+class CIBAAuthRequest(BaseModel):
+    requested_scopes: list
+    deployer_identifier_on_service: str
+
+class CIBAApproveRequest(BaseModel):
+    auth_req_id: str
+
+class TokenRequest(BaseModel):
+    grant_type: str
+    auth_req_id: str
+
 @app.on_event("startup")
 def on_startup():
     database.init_db()
     log_event("Bank", "Bank Service started on port 8003. Initialized accounts database.")
+
+@app.post("/api/oauth/ciba")
+def ciba_authorize(request: CIBAAuthRequest):
+    """
+    CIBA Endpoint (Step 6): Receives auth request from Agent.
+    """
+    auth_req_id = f"ciba_req_{uuid.uuid4().hex}"
+    database.ciba_requests[auth_req_id] = {
+        "status": "pending",
+        "username": request.deployer_identifier_on_service,
+        "scopes": request.requested_scopes
+    }
+    log_event("Bank", f"CIBA Authentication request received. Created auth_req_id: {auth_req_id}. Awaiting Deployer consent...")
+    return {
+        "auth_req_id": auth_req_id,
+        "expires_in": 120,
+        "interval": 1
+    }
+
+@app.get("/api/oauth/ciba/pending")
+def get_pending_ciba():
+    """
+    Simulated out-of-band discovery endpoint for Deployer client.
+    """
+    pending = [
+        {
+            "auth_req_id": rid,
+            "username": r["username"],
+            "scopes": r["scopes"]
+        } for rid, r in database.ciba_requests.items() if r["status"] == "pending"
+    ]
+    return {"requests": pending}
+
+@app.post("/api/oauth/ciba/approve")
+def approve_ciba(request: CIBAApproveRequest):
+    """
+    CIBA Consent Endpoint (Step 8): Deployer client approves consent.
+    """
+    auth_req_id = request.auth_req_id
+    if auth_req_id not in database.ciba_requests:
+        raise HTTPException(status_code=404, detail="CIBA request not found.")
+    
+    database.ciba_requests[auth_req_id]["status"] = "approved"
+    log_event("Bank", f"CIBA request approved by Deployer for auth_req_id: {auth_req_id}")
+    return {"status": "approved"}
+
+@app.post("/api/oauth/token")
+def issue_token(request: TokenRequest):
+    """
+    OAuth 2.0 Token Endpoint (Step 9): Agent polls/exchanges auth_req_id for access token.
+    """
+    if request.grant_type != "urn:openid:params:grant-type:ciba":
+        raise HTTPException(status_code=400, detail="unsupported_grant_type")
+        
+    auth_req_id = request.auth_req_id
+    if auth_req_id not in database.ciba_requests:
+        raise HTTPException(status_code=400, detail="invalid_grant")
+        
+    req = database.ciba_requests[auth_req_id]
+    if req["status"] == "pending":
+        # CIBA spec dictates returning a 400 with authorization_pending error code
+        return JSONResponse(status_code=400, content={"error": "authorization_pending"})
+    elif req["status"] == "denied":
+        raise HTTPException(status_code=400, detail="access_denied")
+    elif req["status"] == "consumed":
+        raise HTTPException(status_code=400, detail="token_already_issued")
+        
+    # Status is approved: Issue mock access token
+    access_token = f"mock_token_{uuid.uuid4().hex}"
+    database.access_tokens[access_token] = {
+        "auth_req_id": auth_req_id,
+        "username": req["username"],
+        "scopes": req["scopes"]
+    }
+    
+    # Mark as consumed so it cannot be used to generate another token
+    req["status"] = "consumed"
+    log_event("Bank", f"OAuth token issued for auth_req_id: {auth_req_id}. Access Token: {access_token[:15]}...")
+    return {
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": 3600
+    }
+
 
 def get_key_from_jwks(keys: list, kid: str) -> ec.EllipticCurvePublicKey:
     """Reconstructs the public key for kid from a list of JWKs."""
@@ -43,11 +140,26 @@ def get_key_from_jwks(keys: list, kid: str) -> ec.EllipticCurvePublicKey:
     raise HTTPException(status_code=400, detail=f"Key with kid '{kid}' not found in JWKS.")
 
 @app.post("/api/bank/transfer")
-def transfer_funds(request: TransferRequest):
+def transfer_funds(request: TransferRequest, authorization: str = Header(None)):
     """
-    Relying Party endpoint: Verifies all 4 peer-level independent tokens in the Agent ID
-    and performs the transaction if validations pass.
+    Relying Party endpoint: Verifies the OAuth 2.0 access token, then verifies all 4
+    peer-level independent tokens in the Agent ID, and performs the transaction.
     """
+    if not authorization or not authorization.startswith("Bearer "):
+        log_event("Bank", "Access Denied: Missing or malformed Authorization header.")
+        raise HTTPException(status_code=401, detail="Unauthorized: Missing or malformed Authorization header.")
+    
+    token = authorization.split(" ")[1]
+    if token not in database.access_tokens:
+        log_event("Bank", f"Access Denied: Invalid or expired access token: {token[:8]}...")
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid or expired access token.")
+        
+    token_info = database.access_tokens[token]
+    log_event("Bank", f"OAuth token validated for user '{token_info['username']}'. Scopes: {token_info['scopes']}")
+    if "transfer_funds" not in token_info["scopes"]:
+        log_event("Bank", "Access Denied: Token lacks 'transfer_funds' scope.")
+        raise HTTPException(status_code=403, detail="Forbidden: Token lacks 'transfer_funds' scope.")
+
     log_event("Bank", f"Received transfer request: Transfer {request.amount:.2f} USD from '{request.from_account}' to '{request.to_account}'.")
     
     # 1. Extract the tokens
@@ -145,3 +257,10 @@ def transfer_funds(request: TransferRequest):
             request.to_account: new_to_balance
         }
     }
+
+@app.delete("/api/oauth/ciba")
+def clear_ciba_state():
+    database.ciba_requests.clear()
+    database.access_tokens.clear()
+    log_event("Bank", "Cleared CIBA requests and access tokens state.")
+    return {"status": "cleared"}
