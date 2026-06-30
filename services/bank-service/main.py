@@ -222,7 +222,36 @@ def transfer_funds(request: TransferRequest, authorization: str = Header(None)):
         log_event("Bank", f"Unexpected validation error: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Validation Failed: {str(e)}")
 
-    # 3. Claims Binding Verification
+    # 3. Cryptographic Attestation Chaining Verification
+    log_event("Bank", "Verifying cryptographic attestation chain links...")
+    import hashlib
+    
+    # 3a. Verify Deployer -> Developer Chain Link
+    dep_hash = hashlib.sha256(dep_jwt.encode('utf-8')).hexdigest()
+    dev_parent_hash = dev_claims.get("parent_token_hash")
+    if dev_parent_hash != dep_hash:
+        log_event("Bank", f"Chain Verification Failed: Developer parent_token_hash ('{dev_parent_hash}') does not match calculated Deployer Attestation hash ('{dep_hash}').")
+        raise HTTPException(status_code=400, detail="Chaining Verification Failed: Developer attestation is not correctly chained to Deployer attestation.")
+    log_event("Bank", "[VERIFICATION SUCCESS] Chain Link verified: Deployer Attestation -> Developer Attestation")
+
+    # 3b. Verify Developer -> Provider Chain Link
+    dev_hash = hashlib.sha256(dev_jwt.encode('utf-8')).hexdigest()
+    prov_parent_hash = prov_claims.get("parent_token_hash")
+    if prov_parent_hash != dev_hash:
+        log_event("Bank", f"Chain Verification Failed: Provider parent_token_hash ('{prov_parent_hash}') does not match calculated Developer Attestation hash ('{dev_hash}').")
+        raise HTTPException(status_code=400, detail="Chaining Verification Failed: Provider attestation is not correctly chained to Developer attestation.")
+    log_event("Bank", "[VERIFICATION SUCCESS] Chain Link verified: Developer Attestation -> Provider Attestation")
+
+    # 3c. Verify Provider -> Agent Instance Binding Chain Link
+    prov_hash = hashlib.sha256(prov_jwt.encode('utf-8')).hexdigest()
+    bind_parent_hash = bind_claims.get("parent_token_hash")
+    if bind_parent_hash != prov_hash:
+        log_event("Bank", f"Chain Verification Failed: Agent Binding parent_token_hash ('{bind_parent_hash}') does not match calculated Provider Attestation hash ('{prov_hash}').")
+        raise HTTPException(status_code=400, detail="Chaining Verification Failed: Agent Instance Binding is not correctly chained to Provider attestation.")
+    log_event("Bank", "[VERIFICATION SUCCESS] Chain Link verified: Provider Attestation -> Agent Instance Binding")
+    log_event("Bank", "[VERIFICATION SUCCESS] Attestation chain verified successfully: Deployer -> Developer -> Provider -> Agent Binding.")
+
+    # 4. Claims Binding Verification
     log_event("Bank", "Verifying binding claims consistency between attestations...")
     bind_instance_id = bind_claims.get("agent_instance_identifier")
     prov_instance_id = prov_claims.get("agent_instance_identifier")

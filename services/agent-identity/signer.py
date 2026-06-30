@@ -97,9 +97,9 @@ def get_jwks() -> dict:
         "keys": keys
     }
 
-def create_developer_attestation(model_name: str) -> str:
+def create_developer_attestation(model_name: str, parent_token_hash: str = None) -> str:
     """
-    Step 4: LLM Developer signs the foundation model details and safety evidence.
+    Step 4: LLM Developer signs the foundation model details, safety evidence, and Deployer hash.
     """
     payload = {
         "iss": "LLM Developer XYZ",
@@ -109,14 +109,17 @@ def create_developer_attestation(model_name: str) -> str:
         "jti": str(uuid.uuid4()),
         "iat": int(time.time())
     }
+    if parent_token_hash:
+        payload["parent_token_hash"] = parent_token_hash
+
     # Sign developer attestation with Developer private key
     token = jwt.encode(payload, developer_key, algorithm="ES256")
     log_event("Developer", f"LLM Developer - Created Developer Attestation JWT for model: {model_name} (Signed using ES256 with Developer private key)")
     return token
 
-def create_provider_attestation(agent_id: str) -> str:
+def create_provider_attestation(agent_id: str, parent_token_hash: str = None) -> str:
     """
-    Step 5: Provider signs compute environment claims.
+    Step 5: Provider signs compute environment claims and Developer hash.
     """
     spiffe_id = f"spiffe://provider.net/agent/worker-{agent_id}"
     payload = {
@@ -127,6 +130,8 @@ def create_provider_attestation(agent_id: str) -> str:
         "provider_security_evidence": f"provider.net/security_evidence/agent_instance_{agent_id}",
         "agent_instance_shutdown_command": "agent_instance_shutdown code: 5559"
     }
+    if parent_token_hash:
+        payload["parent_token_hash"] = parent_token_hash
 
     # Sign provider attestation with Provider private key
     agent_id_token = jwt.encode(payload, provider_key, algorithm="ES256")

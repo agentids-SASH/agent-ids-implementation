@@ -4,6 +4,7 @@ import base64
 import requests
 import jwt  # Used to decode the returned JWT to show claims
 import threading
+import hashlib
 from cryptography.hazmat.primitives.asymmetric import padding, ec
 from cryptography.hazmat.primitives import serialization, hashes
 
@@ -342,6 +343,7 @@ def main():
             print(f"      foundation_model_safety_evidence: {decoded_dev.get('foundation_model_safety_evidence')}")
             print(f"      jti (Nonce):                {decoded_dev.get('jti')}")
             print(f"      iat (Issued At):            {decoded_dev.get('iat')}")
+            print(f"      parent_token_hash:          {decoded_dev.get('parent_token_hash')}")
         except Exception as e:
             log_deployer_event(f"[VERIFICATION FAILED] Developer Attestation signature verification failed: {str(e)}")
 
@@ -356,6 +358,7 @@ def main():
             print(f"      agent_instance_identifier:  {decoded_prov.get('agent_instance_identifier')}")
             print(f"      provider_security_evidence: {decoded_prov.get('provider_security_evidence')}")
             print(f"      agent_instance_shutdown_command: {decoded_prov.get('agent_instance_shutdown_command')}")
+            print(f"      parent_token_hash:          {decoded_prov.get('parent_token_hash')}")
         except Exception as e:
             log_deployer_event(f"[VERIFICATION FAILED] Provider Attestation signature verification failed: {str(e)}")
 
@@ -382,8 +385,30 @@ def main():
             print(f"      sub (Subject):             {decoded_bind.get('sub')}")
             print(f"      agent_instance_identifier:  {decoded_bind.get('agent_instance_identifier')}")
             print(f"      agent_public_key (trunc):  {decoded_bind.get('agent_public_key')[:45].strip()}...")
+            print(f"      parent_token_hash:          {decoded_bind.get('parent_token_hash')}")
         except Exception as e:
             log_deployer_event(f"[VERIFICATION FAILED] Agent Instance Binding signature verification failed: {str(e)}")
+
+        # 5. Verify Cryptographic Attestation Chaining client-side
+        log_deployer_event("Verifying Cryptographic Attestation Chaining client-side...")
+        try:
+            dep_hash = hashlib.sha256(dep_jwt.encode('utf-8')).hexdigest()
+            if decoded_dev.get("parent_token_hash") != dep_hash:
+                raise ValueError("Developer parent_token_hash mismatch")
+            log_deployer_event("[VERIFICATION SUCCESS] Chain Link verified: Deployer -> Developer")
+
+            dev_hash = hashlib.sha256(dev_jwt.encode('utf-8')).hexdigest()
+            if decoded_prov.get("parent_token_hash") != dev_hash:
+                raise ValueError("Provider parent_token_hash mismatch")
+            log_deployer_event("[VERIFICATION SUCCESS] Chain Link verified: Developer -> Provider")
+
+            prov_hash = hashlib.sha256(prov_jwt.encode('utf-8')).hexdigest()
+            if decoded_bind.get("parent_token_hash") != prov_hash:
+                raise ValueError("Agent Binding parent_token_hash mismatch")
+            log_deployer_event("[VERIFICATION SUCCESS] Chain Link verified: Provider -> Agent Instance Binding")
+            log_deployer_event("[VERIFICATION SUCCESS] Cryptographic Attestation Chaining fully verified on client-side!")
+        except Exception as e:
+            log_deployer_event(f"[VERIFICATION FAILED] Cryptographic Attestation Chaining failed: {str(e)}")
 
         # Demonstrate Audit Authority Decryption (available on demand)
         decrypt_url = "http://localhost:8004/api/audit/decrypt"

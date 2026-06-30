@@ -12,9 +12,11 @@ class CallModelRequest(BaseModel):
     receiving_service: str
     request_attestation: bool
     model: str
+    parent_token_hash: str = None
 
 class ComposeIdentityRequest(BaseModel):
     agent_id: str
+    parent_token_hash: str = None
 
 @app.on_event("startup")
 def on_startup():
@@ -30,12 +32,15 @@ def call_model(request: CallModelRequest):
     """
     Step 3 & 4: Receives a prompt and returns the action plan + Developer Attestation.
     """
-    log_event("Developer", f"Received LLM invocation request. Input Payload: prompt='{request.prompt}', receiving_service='{request.receiving_service}', request_attestation={request.request_attestation}, model='{request.model}'")
+    log_event("Developer", f"Received LLM invocation request. Input Payload: prompt='{request.prompt}', receiving_service='{request.receiving_service}', request_attestation={request.request_attestation}, model='{request.model}', parent_token_hash='{request.parent_token_hash}'")
     try:
         # Generate the developer attestation signature if requested
         dev_attestation = None
         if request.request_attestation:
-            dev_attestation = signer.create_developer_attestation(request.model)
+            dev_attestation = signer.create_developer_attestation(
+                model_name=request.model,
+                parent_token_hash=request.parent_token_hash
+            )
 
         # Mock action plan matching the target Bank scenario
         action_plan = {
@@ -62,15 +67,16 @@ def compose_identity(request: ComposeIdentityRequest):
     """
     Step 5: Composes and signs the Provider Attestation JWT.
     """
-    log_event("Provider", f"Provider Attestation request received. Input Payload: agent_id='{request.agent_id}'")
+    log_event("Provider", f"Provider Attestation request received. Input Payload: agent_id='{request.agent_id}', parent_token_hash='{request.parent_token_hash}'")
     try:
         provider_attestation = signer.create_provider_attestation(
-            agent_id=request.agent_id
+            agent_id=request.agent_id,
+            parent_token_hash=request.parent_token_hash
         )
 
         # Decode and log the Provider Attestation JWT claims
         claims = jwt.decode(provider_attestation, options={"verify_signature": False})
-        log_event("Provider", f"Token Inspection - Composed Provider Attestation Claims: iss='{claims.get('iss')}', sub='{claims.get('sub')}', agent_instance_identifier='{claims.get('agent_instance_identifier')}', shutdown_cmd='{claims.get('agent_instance_shutdown_command')}'")
+        log_event("Provider", f"Token Inspection - Composed Provider Attestation Claims: iss='{claims.get('iss')}', sub='{claims.get('sub')}', agent_instance_identifier='{claims.get('agent_instance_identifier')}', shutdown_cmd='{claims.get('agent_instance_shutdown_command')}', parent_token_hash='{claims.get('parent_token_hash')}'")
 
         response_payload = {
             "provider_attestation": provider_attestation
