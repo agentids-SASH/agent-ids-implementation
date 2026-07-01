@@ -6,8 +6,8 @@ import jwt
 import crypto_utils
 from logger_utils import log_event
 
-IDENTITY_COMPOSE_URL = "http://localhost:8002/api/identity/compose"
-IDENTITY_CALL_MODEL_URL = "http://localhost:8002/api/identity/call-model"
+IDENTITY_COMPOSE_URL = "http://127.0.0.1:8002/api/identity/compose"
+IDENTITY_CALL_MODEL_URL = "http://127.0.0.1:8002/api/identity/call-model"
 
 class AgentWorker(threading.Thread):
     def __init__(self, agent_id: str, model: str):
@@ -31,10 +31,12 @@ class AgentWorker(threading.Thread):
         # Simulate loading prompt templates, tools, and LLM clients
         time.sleep(1)
         log_event("Agent", f"[Agent-{self.agent_id}] Agent is active and listening for prompts.")
+        log_event("Agent", f"[Agent-{self.agent_id}] Status: IDLE. Waiting for prompt inputs...")
 
         while not self._stop_event.is_set():
-            log_event("Agent", f"[Agent-{self.agent_id}] Status: IDLE. Waiting for prompt inputs...")
-            self._stop_event.wait(timeout=10.0)
+            self._stop_event.wait(timeout=120.0)
+            if not self._stop_event.is_set():
+                log_event("Agent", f"[Agent-{self.agent_id}] Status: IDLE. Waiting for prompt inputs...")
 
         log_event("Provider", f"[Agent-{self.agent_id}] Thread stop signal received. Shutting down gracefully...")
 
@@ -73,31 +75,31 @@ class AgentWorker(threading.Thread):
                 "model": self.model,
                 "parent_token_hash": deployer_hash
             }
-            log_event("Agent", f"[Agent-{self.agent_id}] [Step 3] Calling LLM Developer attestation endpoint: {IDENTITY_CALL_MODEL_URL}. Payload: {model_payload}")
+            log_event("Provider", f"[Agent-{self.agent_id}] [Step 3] Calling LLM Developer attestation endpoint: {IDENTITY_CALL_MODEL_URL}. Payload: {model_payload}")
             model_res = requests.post(IDENTITY_CALL_MODEL_URL, json=model_payload, timeout=5)
             
             if model_res.status_code != 200:
-                log_event("Agent", f"[Agent-{self.agent_id}] LLM Developer call failed. Status Code: HTTP {model_res.status_code}. Response: {model_res.text}")
+                log_event("Provider", f"[Agent-{self.agent_id}] LLM Developer call failed. Status Code: HTTP {model_res.status_code}. Response: {model_res.text}")
                 return False
             
             model_data = model_res.json()
             dev_attestation = model_data.get("developer_attestation")
-            log_event("Agent", f"[Agent-{self.agent_id}] [Step 4] Received safety attestation. Response Body: foundation_model_identifier='{model_data.get('foundation_model_identifier')}', developer_identifier='{model_data.get('developer_identifier')}', safety_evidence_url='{model_data.get('foundation_model_safety_evidence')}', developer_attestation (JWT)='{dev_attestation[:30]}...'")
-
+            log_event("Provider", f"[Agent-{self.agent_id}] [Step 4] Received safety attestation. Response Body: foundation_model_identifier='{model_data.get('foundation_model_identifier')}', developer_identifier='{model_data.get('developer_identifier')}', safety_evidence_url='{model_data.get('foundation_model_safety_evidence')}', developer_attestation (JWT)='{dev_attestation[:30]}...'")
+ 
             # Calculate Developer Attestation SHA-256 hash
             developer_hash = hashlib.sha256(dev_attestation.encode('utf-8')).hexdigest()
-
+ 
             # 3. Step 5: Compose Provider Attestation
             compose_payload = {
                 "agent_id": self.agent_id,
                 "parent_token_hash": developer_hash
             }
-            log_event("Agent", f"[Agent-{self.agent_id}] [Step 5] Requesting Provider signature to compile Provider Attestation JWT: {IDENTITY_COMPOSE_URL}. Payload: agent_id='{compose_payload['agent_id']}', parent_token_hash='{compose_payload['parent_token_hash']}'")
+            log_event("Provider", f"[Agent-{self.agent_id}] [Step 5] Requesting Provider signature to compile Provider Attestation JWT: {IDENTITY_COMPOSE_URL}. Payload: agent_id='{compose_payload['agent_id']}', parent_token_hash='{compose_payload['parent_token_hash']}'")
             compose_res = requests.post(IDENTITY_COMPOSE_URL, json=compose_payload, timeout=5)
             
             if compose_res.status_code == 200:
                 provider_attestation = compose_res.json().get("provider_attestation")
-                log_event("Agent", f"[Agent-{self.agent_id}] Provider composition succeeded. Status Code: HTTP 200 OK. Received Provider Attestation JWT (len: {len(provider_attestation)} bytes, algorithm: ES256)")
+                log_event("Provider", f"[Agent-{self.agent_id}] Provider composition succeeded. Status Code: HTTP 200 OK. Received Provider Attestation JWT (len: {len(provider_attestation)} bytes, algorithm: ES256)")
 
                 # Calculate Provider Attestation SHA-256 hash
                 provider_hash = hashlib.sha256(provider_attestation.encode('utf-8')).hexdigest()
@@ -138,8 +140,6 @@ class AgentWorker(threading.Thread):
                 log_event("Agent", f"    iss (Issuer):               {dev_claims.get('iss')}")
                 log_event("Agent", f"    developer_identifier:        {dev_claims.get('developer_identifier')}")
                 log_event("Agent", f"    foundation_model_identifier: {dev_claims.get('foundation_model_identifier')}")
-                log_event("Agent", f"    jti (Nonce):                {dev_claims.get('jti')}")
-                log_event("Agent", f"    iat (Issued At):            {dev_claims.get('iat')}")
                 log_event("Agent", f"    parent_token_hash:          {dev_claims.get('parent_token_hash')}")
 
                 # 3. Provider Attestation

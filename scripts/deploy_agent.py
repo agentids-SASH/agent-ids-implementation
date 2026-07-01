@@ -341,8 +341,6 @@ def main():
             print(f"      developer_identifier:        {decoded_dev.get('developer_identifier')}")
             print(f"      foundation_model_identifier: {decoded_dev.get('foundation_model_identifier')}")
             print(f"      foundation_model_safety_evidence: {decoded_dev.get('foundation_model_safety_evidence')}")
-            print(f"      jti (Nonce):                {decoded_dev.get('jti')}")
-            print(f"      iat (Issued At):            {decoded_dev.get('iat')}")
             print(f"      parent_token_hash:          {decoded_dev.get('parent_token_hash')}")
         except Exception as e:
             log_deployer_event(f"[VERIFICATION FAILED] Developer Attestation signature verification failed: {str(e)}")

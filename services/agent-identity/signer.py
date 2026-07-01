@@ -105,9 +105,7 @@ def create_developer_attestation(model_name: str, parent_token_hash: str = None)
         "iss": "LLM Developer XYZ",
         "developer_identifier": "LLM Developer XYZ",
         "foundation_model_identifier": f"Commercial {model_name}_4.2",
-        "foundation_model_safety_evidence": "LLMDevXYZ.org/commercial_modelname_4_2_safety_report",
-        "jti": str(uuid.uuid4()),
-        "iat": int(time.time())
+        "foundation_model_safety_evidence": "LLMDevXYZ.org/commercial_modelname_4_2_safety_report"
     }
     if parent_token_hash:
         payload["parent_token_hash"] = parent_token_hash

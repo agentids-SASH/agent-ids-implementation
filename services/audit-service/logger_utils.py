@@ -21,7 +21,7 @@ def submit_log_async(actor: str, message: str, timestamp: float):
             "message": message
         }
         # Central Registry on port 8000
-        requests.post("http://localhost:8000/api/logs", json=payload, timeout=0.5)
+        requests.post("http://127.0.0.1:8000/api/logs", json=payload, timeout=0.5)
     except Exception:
         pass
 
