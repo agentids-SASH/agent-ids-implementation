@@ -83,7 +83,17 @@ The platform implements the 13 steps of the official protocol lifecycle as demon
 
 ## 4. Running the Microservices
 
-You need to run all 5 microservices concurrently. Open 5 separate terminals (ensure the virtual environment is activated in each) and run the corresponding commands:
+You can run all 5 microservices concurrently using either a single command or by starting them manually in separate terminals.
+
+### Method A: Single Command (Recommended)
+Run the consolidated services orchestrator script from the root directory:
+```bash
+python scripts/start_all_services.py
+```
+This script will concurrently launch all 5 uvicorn processes in the background. Press `Ctrl+C` to terminate all services gracefully.
+
+### Method B: Manual Startup (5 Terminals)
+Useful for debugging, as this isolates the standard output, stack traces, and HTTP request logs for each individual service. Open 5 separate terminals (ensure the virtual environment is activated in each) and run the corresponding commands:
 
 ```bash
 # Terminal 1: Agent Registry (Port 8000)
