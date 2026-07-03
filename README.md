@@ -76,7 +76,7 @@ The platform implements the 13 steps of the official protocol lifecycle as demon
 
 3. Install the required dependencies:
    ```bash
-   pip install fastapi uvicorn requests pyjwt cryptography pydantic
+   pip install -r requirements.txt
    ```
 
 ---
