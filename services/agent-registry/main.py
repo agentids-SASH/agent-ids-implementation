@@ -493,8 +493,8 @@ def simulator_step(step_num: int):
                 log_event("Bank", "Bank Service approved and executed transaction.")
                 log_event("Agent", "Action outcome: SUCCESS. Transaction completed.")
             else:
-                log_event("Bank", f"Bank responded with HTTP {res.status_code}. Response: {sim_state.transfer_response}")
-                log_event("Bank", f"Bank Service rejected transaction: {sim_state.transfer_response.get('detail')}")
+                detail_msg = sim_state.transfer_response.get('detail') if isinstance(sim_state.transfer_response, dict) else 'Transaction failed'
+                log_event("Bank", f"Bank Service rejected transaction: {detail_msg}")
                 log_event("Agent", "Action outcome: ACTION_REJECTED. Transaction failed.")
 
         sim_state.current_step = step_num
