@@ -224,9 +224,21 @@ def simulator_step(step_num: int):
             deployer_key_path = os.path.join(root_dir, "scripts", "deployer_key.pem")
             deployer_pub_path = os.path.join(services_dir, "agent-identity", "deployer_public_key.pem")
             
-            with open(deployer_key_path, "rb") as f:
-                deployer_key = serialization.load_pem_private_key(f.read(), password=None)
-            log_event("Deployer", "Loaded existing Deployer private key from scripts/deployer_key.pem.")
+            if os.path.exists(deployer_key_path):
+                with open(deployer_key_path, "rb") as f:
+                    deployer_key = serialization.load_pem_private_key(f.read(), password=None)
+                log_event("Deployer", "Loaded existing Deployer private key from scripts/deployer_key.pem.")
+            else:
+                deployer_key = ec.generate_private_key(ec.SECP256R1())
+                pem = deployer_key.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                )
+                os.makedirs(os.path.dirname(deployer_key_path), exist_ok=True)
+                with open(deployer_key_path, "wb") as f:
+                    f.write(pem)
+                log_event("Deployer", "Generated and saved new Deployer private key to scripts/deployer_key.pem.")
             
             dep_pub_pem = deployer_key.public_key().public_bytes(
                 encoding=serialization.Encoding.PEM,
