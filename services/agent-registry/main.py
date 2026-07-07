@@ -217,7 +217,14 @@ def simulator_step(step_num: int):
             log_event("Deployer", f"Generated JWE ciphertext using RSA-OAEP-256: {jwe[:30]}...")
             
             log_event("Deployer", "Loading or generating Deployer's local cryptographic private key...")
-            with open("../../scripts/deployer_key.pem", "rb") as f:
+            registry_dir = os.path.dirname(os.path.abspath(__file__))
+            services_dir = os.path.dirname(registry_dir)
+            root_dir = os.path.dirname(services_dir)
+            
+            deployer_key_path = os.path.join(root_dir, "scripts", "deployer_key.pem")
+            deployer_pub_path = os.path.join(services_dir, "agent-identity", "deployer_public_key.pem")
+            
+            with open(deployer_key_path, "rb") as f:
                 deployer_key = serialization.load_pem_private_key(f.read(), password=None)
             log_event("Deployer", "Loaded existing Deployer private key from scripts/deployer_key.pem.")
             
@@ -225,7 +232,7 @@ def simulator_step(step_num: int):
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
-            with open("../agent-identity/deployer_public_key.pem", "wb") as f:
+            with open(deployer_pub_path, "wb") as f:
                 f.write(dep_pub_pem)
             log_event("Deployer", "Published Deployer public key to services/agent-identity/deployer_public_key.pem.")
                 

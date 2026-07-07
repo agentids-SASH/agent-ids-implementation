@@ -2,7 +2,8 @@ import json
 import os
 from typing import Dict, Any, Optional
 
-DB_FILE = "agents_db.json"
+REGISTRY_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(REGISTRY_DIR, "agents_db.json")
 
 def init_db():
     """Initializes the JSON database file if it does not exist."""

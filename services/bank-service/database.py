@@ -1,7 +1,8 @@
 import json
 import os
 
-DB_FILE = "bank_db.json"
+BANK_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FILE = os.path.join(BANK_DIR, "bank_db.json")
 
 # In-memory stores for OAuth/CIBA transient state
 # auth_req_id -> { "status": "pending" | "approved" | "denied", "username": str, "scopes": list }

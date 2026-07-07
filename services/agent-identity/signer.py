@@ -9,8 +9,9 @@ from logger_utils import log_event
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("SignerUtils")
 
-DEV_KEY_FILE = "developer_key.pem"
-PROV_KEY_FILE = "provider_key.pem"
+SIGNER_DIR = os.path.dirname(os.path.abspath(__file__))
+DEV_KEY_FILE = os.path.join(SIGNER_DIR, "developer_key.pem")
+PROV_KEY_FILE = os.path.join(SIGNER_DIR, "provider_key.pem")
 
 import uuid
 import time
@@ -54,7 +55,7 @@ def get_provider_public_key_pem() -> str:
         format=serialization.PublicFormat.SubjectPublicKeyInfo
     ).decode("utf-8")
 
-DEPLOYER_PUB_KEY_FILE = "deployer_public_key.pem"
+DEPLOYER_PUB_KEY_FILE = os.path.join(SIGNER_DIR, "deployer_public_key.pem")
 
 def load_deployer_public_key() -> ec.EllipticCurvePublicKey:
     """Loads Deployer's public key from file if it exists."""

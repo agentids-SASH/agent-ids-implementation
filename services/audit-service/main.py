@@ -9,7 +9,8 @@ from logger_utils import log_event
 
 app = FastAPI(title="Agent ID Platform - Audit Authority Service")
 
-KEY_FILE = "audit_key.pem"
+AUDIT_DIR = os.path.dirname(os.path.abspath(__file__))
+KEY_FILE = os.path.join(AUDIT_DIR, "audit_key.pem")
 AUDIT_SECRET_TOKEN = "audit_secret_token"  # Simulated API key for authorized auditors
 
 def load_or_generate_key() -> rsa.RSAPrivateKey:
