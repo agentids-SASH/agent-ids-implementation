@@ -13,14 +13,14 @@ access_tokens = {}
 
 DEFAULT_DB = {
     "accounts": {
-        "checking": 5000.0,
+        "checking": 20000.0,
         "savings": 1000.0
     }
 }
 
-def init_db():
-    """Initializes the database file if it does not exist."""
-    if not os.path.exists(DB_FILE):
+def init_db(force: bool = False):
+    """Initializes the database file, optionally force-recreating it."""
+    if force or not os.path.exists(DB_FILE):
         save_db(DEFAULT_DB)
 
 def load_db() -> dict:

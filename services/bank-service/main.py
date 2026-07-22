@@ -32,7 +32,7 @@ class TokenRequest(BaseModel):
 
 @app.on_event("startup")
 def on_startup():
-    database.init_db()
+    database.init_db(force=True)
     log_event("Bank", "Bank Service started on port 8003. Initialized accounts database.")
 
 @app.post("/api/oauth/ciba")
